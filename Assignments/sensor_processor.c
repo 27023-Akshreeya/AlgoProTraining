@@ -3,13 +3,13 @@
 #include <stdlib.h>
 
 # define BIT(n) (1UL << (n))
-# define IS_SET(reg,bit) 
+# define IS_SET(reg,bit) (((reg) & BIT(bit))!=0)
 # define MAX_SENSORS 5
-
 # define BIT_ACTIVE 0
 # define BIT_ERROR 1
 # define BIT_WARN 2
-
+# define ID_SHIFT 3
+# define ID_MASK (0x0F << ID_SHIFT)
 typedef union 
 {
     uint32_t raw;
@@ -29,6 +29,14 @@ typedef struct
     SensorStatus status;
 }Sensor;
 
+typedef enum{
+    FROZEN,
+    NORMAL,
+    WARM,
+    HOT,
+    CRITICAL
+}temperature;
+
 float randomTemperature(float minTemp, float maxTemp){
     float scale = rand() / (float) RAND_MAX;
     return minTemp + scale * (maxTemp - minTemp);
@@ -47,11 +55,54 @@ Sensor* find_sensor(Sensor *arr, int count, uint8_t id)
     }
     for(int i = 0 ; i < count; i++)
     {
-        if(arr[i].id == id){
-            return &arr;
+        if(arr[i].id == id)
+        {
+            return &(arr[i]);
         }
     }
     return NULL;
+}
+
+char *classify_temp(float temp){
+    temperature tempState;
+
+    if( temp < 0.0f)
+    {
+        tempState = FROZEN;
+    }
+    else if( temp <= 35.0f)
+    {
+        tempState = NORMAL;
+    }
+    else if( temp <= 55.0f)
+    {
+        tempState = WARM;
+    }
+    else if(temp <= 80.0f)
+    {
+        tempState = HOT;
+    }
+    else
+    {
+        tempState = CRITICAL;
+    }
+
+    switch (tempState)
+    {
+    case FROZEN:
+        return "Frozen";
+    case NORMAL:
+        return "Normal";
+    case WARM:
+        return "Warm";
+    case HOT:
+        return "Hot";
+    case CRITICAL:
+        return "Critical";
+    default:
+        return "Invalid";
+    }
+    
 }
 
 void* my_memcpy(void *dst, const void *src, size_t n)
@@ -64,6 +115,44 @@ void* my_memcpy(void *dst, const void *src, size_t n)
         *(d+i) = *(s+i);
     }
     return dst;
+}
+
+void foreach_sensor(Sensor *arr, int n, void(*cb)(const Sensor*)){
+    for(int i =0 ;i<n;i++){
+        cb(arr+i);
+    }
+}
+
+void cb_print(const Sensor *s) {
+    printf("ID: %u\nName: %-10s\nTemperature: %6.2f C (%s)\nRaw: 0x%08X\n",
+           s->id, s->name, s->temp, classify_temp(s->temp), s->status.raw);
+}
+
+void cb_count_errors(const Sensor* s){
+    static int errors = 0;
+    if (IS_SET(s->status.raw, BIT_ERROR))
+    {
+        errors++;
+    }
+    printf("ID: %d Error:%d\n", s->id, errors);
+}
+
+void activate_sensor(Sensor *s, uint8_t id) {
+    s->status.raw |= BIT(BIT_ACTIVE);         
+    s->status.raw &= ~ID_MASK;                  
+    s->status.raw |= ((id << ID_SHIFT) & ID_MASK); 
+}
+
+void set_error(Sensor *s) {
+    s->status.raw |= BIT(BIT_ERROR);
+}
+
+void clear_error(Sensor *s) {
+    s->status.raw &= ~BIT(BIT_ERROR);
+}
+
+int is_critical(const Sensor *s) {
+    return (IS_SET(s->status.raw, BIT_ERROR)) && (IS_SET(s->status.raw, BIT_WARN));
 }
 
 int main()
@@ -89,4 +178,7 @@ int main()
         currSensor->id = i +1;
         currSensor->status.raw = sample_flags[i] | ((currSensor->id << 3) & (0x0F << 3));
     }
+
+    free(sensorPtr);
+    return 0;
 }
