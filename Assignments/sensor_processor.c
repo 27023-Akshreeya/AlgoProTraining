@@ -179,6 +179,45 @@ int main()
         currSensor->status.raw = sample_flags[i] | ((currSensor->id << 3) & (0x0F << 3));
     }
 
+    Sensor DummySensor;
+        printf("Sizes -> id: %zu, name: %zu, temp: %zu, status: %zu, total: %zu\n\n",
+           sizeof(DummySensor.id), sizeof(DummySensor.name), sizeof(DummySensor.temp),
+           sizeof(DummySensor.status), sizeof(Sensor));
+
+    printf("searching sensor\n");
+    Sensor *foundSensor = find_sensor(sensorPtr, MAX_SENSORS, 3);
+    if(foundSensor != NULL){
+        printf("Sensor found: ID: %u, Name: %s, Temp: %.2f, Status: 0x%08X\n",
+               foundSensor->id, foundSensor->name, foundSensor->temp, foundSensor->status.raw);
+    } else {
+        printf("Sensor not found\n");
+    }
+    Sensor backup;
+    my_memcpy(&backup, sensorPtr, sizeof(Sensor));
+    printf("\nBackup Sensor -> ID: %u, Name: %s, Temp: %.2f, Status: 0x%08X\n",
+           backup.id, backup.name, backup.temp, backup.status.raw);
+
+    printf("\nIterating over sensors:\n");
+    foreach_sensor(sensorPtr, MAX_SENSORS, cb_print);
+
+    printf("\nCounting errors:\n");
+    foreach_sensor(sensorPtr, MAX_SENSORS, cb_count_errors);
+
+    printf("Testing activate_sensor, set_error, clear_error, and is_critical functions:\n");
+    Sensor *testSensor = sensorPtr + 2;
+    printf("Initial ID: %u, Status: 0x%08X\n", testSensor->id, testSensor->status.raw);
+    activate_sensor(testSensor, 10);
+    printf("After activating sensor with ID: %u, Status: 0x%08X\n", testSensor->id, testSensor->status.raw);
+    set_error(testSensor);
+    printf("After setting error: ID: %u, Status: 0x%08X\n", testSensor->id, testSensor->status.raw);
+    clear_error(testSensor);
+    printf("After clearing error: ID: %u, Status: 0x%08X\n", testSensor->id, testSensor->status.raw);
+    if (is_critical(testSensor)) {
+        printf("Sensor ID: %u is in a critical state.\n", testSensor->id);
+    } else {
+        printf("Sensor ID: %u is NOT in a critical state.\n", testSensor->id);
+    }
+
     free(sensorPtr);
     return 0;
 }
