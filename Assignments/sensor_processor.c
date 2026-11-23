@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <signal.h>
+#include <unistd.h>
 
 # define BIT(n) (1UL << (n))
 # define IS_SET(reg,bit) (((reg) & BIT(bit))!=0)
@@ -10,6 +13,12 @@
 # define BIT_WARN 2
 # define ID_SHIFT 3
 # define ID_MASK (0x0F << ID_SHIFT)
+volatile sig_atomic_t running = 1;
+pthread_mutex_t watchdog_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t watchdog_cond = PTHREAD_COND_INITIALIZER;
+int count = 0;
+int ready = 0;
+
 typedef union 
 {
     uint32_t raw;
@@ -37,6 +46,30 @@ typedef enum{
     CRITICAL
 }temperature;
 
+void signal_handler(int signum) {
+    signal(signum, signal_handler);
+    running = 0;
+    printf("Signal received: %d\n", signum);
+}
+
+void * watchdog_thread(void *arg){
+    while(1){
+        pthread_mutex_lock(&watchdog_mutex);
+        while(!ready && running){
+            pthread_cond_wait(&watchdog_cond, &watchdog_mutex);
+        }
+        if (!running && !ready) {
+            pthread_mutex_unlock(&watchdog_mutex);
+            break;
+        }
+        int local_count = count;
+        count = 0;
+        ready = 0;
+        pthread_mutex_unlock(&watchdog_mutex);
+        printf("Watchdog: %d sensors processed\n", local_count);
+    }
+    return NULL;
+}
 float randomTemperature(float minTemp, float maxTemp){
     float scale = rand() / (float) RAND_MAX;
     return minTemp + scale * (maxTemp - minTemp);
@@ -157,6 +190,15 @@ int is_critical(const Sensor *s) {
 
 int main()
 {
+    if (signal(SIGINT, signal_handler) == SIG_ERR) {
+        printf("Error setting up signal handler\n");
+        return -1;
+    }
+    if (signal(SIGTERM, signal_handler) == SIG_ERR) {
+        printf("Error setting up signal handler\n");
+        return -1;
+    }
+
     Sensor *sensorPtr = malloc(MAX_SENSORS * sizeof(Sensor));
     if(sensorPtr == NULL){
         printf("Error : Null pointer!");
@@ -218,6 +260,37 @@ int main()
         printf("Sensor ID: %u is NOT in a critical state.\n", testSensor->id);
     }
 
+    pthread_t watchdog;
+    if (pthread_create(&watchdog, NULL, watchdog_thread, NULL) != 0) {
+        printf("Error creating watchdog thread\n");
+        free(sensorPtr);
+        return -1;
+    }
+    printf("Starting the sensor monitoring...\n");
+    printf("Press Ctrl+C to stop the program...\n");
+    while (running) {
+        foreach_sensor(sensorPtr, MAX_SENSORS, cb_print);
+        int critical_count = 0;
+        for (int i = 0; i < MAX_SENSORS; i++) {
+            if (is_critical(&sensorPtr[i])) {
+                critical_count++;
+            }
+        }
+        pthread_mutex_lock(&watchdog_mutex);
+        count = critical_count;
+        ready = 1;
+        pthread_cond_signal(&watchdog_cond);
+        pthread_mutex_unlock(&watchdog_mutex);
+
+        sleep(1);
+    }
+
+    pthread_mutex_lock(&watchdog_mutex);
+    pthread_cond_broadcast(&watchdog_cond);
+    pthread_mutex_unlock(&watchdog_mutex);
+    pthread_join(watchdog, NULL);
+    pthread_mutex_destroy(&watchdog_mutex);
+    pthread_cond_destroy(&watchdog_cond);
     free(sensorPtr);
     return 0;
 }
